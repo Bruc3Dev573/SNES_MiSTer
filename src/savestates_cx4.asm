@@ -124,13 +124,41 @@ cx4_save_ram:
 	sta SSDATA
 
 	;// Data RAM (3 KB) read through the RAMIO window $00:6000-6BFF; no dedicated SS port needed.
+	;// Unrolled x8 with DB=$C0 so the stream store is a 4-cycle absolute write.
+	lda #$C0
+	pha
+	plb
 	ldx #$0000
 -
 	lda.l $006000,x
-	sta SSDATA
+	sta.w $6000
+	inx
+	lda.l $006000,x
+	sta.w $6000
+	inx
+	lda.l $006000,x
+	sta.w $6000
+	inx
+	lda.l $006000,x
+	sta.w $6000
+	inx
+	lda.l $006000,x
+	sta.w $6000
+	inx
+	lda.l $006000,x
+	sta.w $6000
+	inx
+	lda.l $006000,x
+	sta.w $6000
+	inx
+	lda.l $006000,x
+	sta.w $6000
 	inx
 	cpx #$0C00
 	bne -
+	lda #$00
+	pha
+	plb
 
 cx4_save_cache:
 	lda.b #SS_CX4CACHE		;// program cache block marker
@@ -224,13 +252,41 @@ cx4_load_ram:
 	lda SSDATA				;// consume SS_CX4RAM marker
 
 	;// Data RAM (3 KB) written back through the RAMIO window $00:6000-6BFF (open during a LOAD).
+	;// Unrolled x8 with DB=$C0 so the stream read is a 4-cycle absolute load.
+	lda #$C0
+	pha
+	plb
 	ldx #$0000
 -
-	lda SSDATA
+	lda.w $6000
+	sta.l $006000,x
+	inx
+	lda.w $6000
+	sta.l $006000,x
+	inx
+	lda.w $6000
+	sta.l $006000,x
+	inx
+	lda.w $6000
+	sta.l $006000,x
+	inx
+	lda.w $6000
+	sta.l $006000,x
+	inx
+	lda.w $6000
+	sta.l $006000,x
+	inx
+	lda.w $6000
+	sta.l $006000,x
+	inx
+	lda.w $6000
 	sta.l $006000,x
 	inx
 	cpx #$0C00
 	bne -
+	lda #$00
+	pha
+	plb
 
 cx4_load_cache:
 	lda SSDATA				;// consume SS_CX4CACHE marker
