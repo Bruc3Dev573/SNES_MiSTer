@@ -464,7 +464,7 @@ end
 
 always @(*) begin
 	// savestate.bin ROM
-	rom_addr[23:16] = { 2'b11, 6'b11_1111 };
+	rom_addr[23:16] = 8'h7F;
 	rom_addr[15: 0] = { ca[16], ca[14:0] };
 	if (map_rom_ovr) begin
 		rom_addr[15:0] = map_rom_addr;
