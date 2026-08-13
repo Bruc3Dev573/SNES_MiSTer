@@ -479,6 +479,10 @@ Save_ppu_regs2:
 	lda.l SS_PPU+PPU_BASE,x	;// Load value from PPU register
 	sta SSDATA				;// Store register value in save state
 	
+	nop						;// diagnostic: widen the gap between the two SSDATA writes
+	nop
+	nop
+	nop
 	lda.l SS_PPU+PPU_HBASE,x	;// High byte
 	sta SSDATA
 
