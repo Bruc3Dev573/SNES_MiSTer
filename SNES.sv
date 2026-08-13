@@ -145,7 +145,7 @@ wire reset = RESET | buttons[1] | status[0] | cart_download | spc_download | bk_
 
 `include "build_id.v"
 parameter CONF_STR = {
-	"SNES;SS3F800000:100000,UART31250,MIDI;",
+	"SNES;SS3E000000:100000,UART31250,MIDI;",
 	"FS1,SFCSMCBINBS ;",
 	"FS4,SPC;",
 	"-;",
@@ -1397,7 +1397,7 @@ ddram ddram
 
 	.cache_rst(~RESET_N),
 
-	.rdaddr({11'b0011_1111_10, ss_ddr_addr[21:3]}), // Save states at $3F80.0000
+	.rdaddr({11'b0011_1110_00, ss_ddr_addr[21:3]}), // Save states at $3E00.0000
 	.dout(ss_ddr_dout),
 	.rom_din(ss_ddr_din),
 	.rom_be(ss_ddr_be),
