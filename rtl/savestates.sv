@@ -305,6 +305,12 @@ always @(posedge clk) begin
 
 			ddr_do[ss_data_addr[2:0]*8 +:8] <= ddr_data;
 
+			// Arm the increment here as well as on the write edge above. Both
+			// sample the same address decode at different instants, and a byte
+			// taken here without the pointer moving would be overwritten by the
+			// next one. The flag is idempotent and cleared on the trailing edge.
+			ss_data_addr_inc <= 1;
+
 			if (ss_data_addr[2:0] == 3'd7) begin // 8 bytes written
 				ddr_state <= WRITE_DATA;
 			end
