@@ -29,7 +29,7 @@ module savestates
 	input       [7:0] di,
 	output reg  [7:0] ss_do,
 
-	output     [23:0] rom_addr,
+	output reg [23:0] rom_addr,
 
 	output     [19:0] ext_addr,
 
@@ -73,7 +73,7 @@ module savestates
 	input             sa1_sns_romsel,
 
 	output            ss_do_ovr,
-	output            ss_rom_ovr,
+	output reg        ss_rom_ovr,
 	output reg        ss_busy
 );
 
@@ -462,12 +462,31 @@ always @(posedge clk) begin
 	if (cx4_regs_sel) ss_do <= cx4_di;
 end
 
-always @(*) begin
+// The SDRAM controller samples addr0 in the clk_mem cycle of the rd0 rising
+// edge, one master cycle after CA changes, so the combinational
+// CPU->mapper->override address cloud has a single master cycle to settle.
+// Registering the savestate window address and its select gives them a full
+// extra master cycle instead of racing that capture; the read then launches
+// on the following rd0 pulse of the slot and still completes well before the
+// CPU samples. The SA1 mapping keeps the combinational path: the SA1-side
+// ROM strobe rises in the same cycle its address changes, so a registered
+// address would miss the launch edge entirely.
+reg  [23:0] rom_addr_r;
+reg         ss_rom_ovr_r;
+always @(posedge clk) begin
 	// savestate.bin ROM
+	rom_addr_r[23:16] <= { 2'b11, 6'b11_1111 };
+	rom_addr_r[15: 0] <= map_rom_ovr ? map_rom_addr : { ca[16], ca[14:0] };
+	ss_rom_ovr_r      <= map_active ? map_rom_ovr : ss_busy;
+end
+
+always @(*) begin
 	rom_addr[23:16] = { 2'b11, 6'b11_1111 };
-	rom_addr[15: 0] = { ca[16], ca[14:0] };
-	if (map_rom_ovr) begin
-		rom_addr[15:0] = map_rom_addr;
+	rom_addr[15: 0] = map_rom_ovr ? map_rom_addr : { ca[16], ca[14:0] };
+	ss_rom_ovr      = map_active ? map_rom_ovr : ss_busy;
+	if (~sa1_active) begin
+		rom_addr   = rom_addr_r;
+		ss_rom_ovr = ss_rom_ovr_r;
 	end
 end
 
@@ -481,7 +500,6 @@ always @(*) begin
 end
 
 assign ss_do_ovr = ss_busy & ss_oe;
-assign ss_rom_ovr = map_active ? map_rom_ovr : ss_busy;
 
 assign aram_sel = ss_busy & (pa == 8'h84);
 assign dsp_regs_sel = ss_busy & (pa == 8'h85);
