@@ -180,7 +180,15 @@ reg [31:0] ss_count = 0;
 // spare bits of the header counter word, behind a marker nibble so a file from
 // a different build cannot be misread, and the format itself does not change.
 reg [23:0] ca_held;
-reg [9:0] c_miss, c_over;
+reg [9:0] c_miss = 0, c_over = 0;
+// Watchdog. A save or load that derails leaves ss_busy asserted for good and
+// the console stays wedged in savestate mode, which is what a black screen
+// after a failed load looks like. Time it out, let the machine go, and record
+// what happened. A save that times out still gets its header written, so a
+// file always appears and always carries the counters; a load has no file of
+// its own, so its verdict is sticky and rides out with the next save.
+reg [23:0] wd_cnt = 0;
+reg wd_save_to = 0, wd_load_to = 0, wd_load_ok = 0;
 wire ss_data_sel_held = (ca_held[23:16] == 8'hC0) & (ca_held[15:0] == 16'h6000);
 
 // Detect if NMI is being used. Some games do not use NMI during game play.
@@ -213,6 +221,10 @@ always @(posedge clk) begin
 		ss_ext_addr <= 0;
 		ss_ext_addr_inc <= 0;
 		ddr_state <= DDR_IDLE;
+		wd_cnt <= 0;
+		wd_save_to <= 0;
+		wd_load_to <= 0;
+		wd_load_ok <= 0;
 	end else begin
 		if (~(load_en | save_en)) begin
 			if (~save_old & save) begin
@@ -238,6 +250,7 @@ always @(posedge clk) begin
 						ss_count <= ss_count + 1'b1;
 					c_miss <= 0;
 					c_over <= 0;
+					wd_save_to <= 0;
 					end
 				end
 			end
@@ -251,10 +264,34 @@ always @(posedge clk) begin
 			if (rd_rti) begin
 				ss_busy <= 0;
 				rd_rti <= 0;
+				if (load_en) begin wd_load_ok <= 1; wd_load_to <= 0; end
 				load_en <= 0;
 				save_en <= 0;
 				save_end <= 0;
 			end
+		end
+
+		// ~390 ms at the master clock; a healthy save finishes in tens of ms.
+		if (ss_busy) begin
+			if (~&wd_cnt) wd_cnt <= wd_cnt + 1'b1;
+			if (&wd_cnt) begin
+				ss_busy <= 0;
+				rd_rti <= 0;
+				if (save_en) begin
+					wd_save_to <= 1;
+					save_end <= 1;
+					ss_data_size <= ss_data_addr;
+					ddr_state <= WRITE_CNTSIZE;   // leave a file behind anyway
+				end
+				if (load_en) begin
+					wd_load_to <= 1;
+					wd_load_ok <= 0;
+				end
+				load_en <= 0;
+				save_en <= 0;
+			end
+		end else begin
+			wd_cnt <= 0;
 		end
 
 		if (cpuwr_ce & ss_busy) begin
@@ -347,7 +384,8 @@ always @(posedge clk) begin
 					ddr_state <= save_end ? WRITE_CNTSIZE : DDR_END;
 				end
 				WRITE_CNTSIZE: begin
-					ddr_do <= {14'd0, ss_data_size[19:2], 4'hD, c_miss, c_over, ss_count[7:0]};
+					ddr_do <= {14'd0, ss_data_size[19:2], 4'hD, c_miss[5:0], c_over[5:0],
+						           wd_save_to, wd_load_to, wd_load_ok, 5'd0, ss_count[7:0]};
 					ss_ddr_addr <= 20'd0;
 					ddr_we <= 1;
 					ddr_req <= ~ddr_req;
