@@ -101,6 +101,8 @@ always @(posedge clk or negedge reset_n) begin
 	end
 end
 
+always @(posedge clk) if (~cpuwr_n) ca_held <= ca;
+
 wire cpurd_ce   =  cpurd_n_old & ~cpurd_n;
 wire cpurd_ce_n = ~cpurd_n_old &  cpurd_n;
 wire cpuwr_ce   =  cpuwr_n_old & ~cpuwr_n;
@@ -170,6 +172,17 @@ localparam DDR_IDLE = 4'd0, LOAD_DATA = 4'd1, WRITE_DATA = 4'd2,
 
 reg [31:0] ss_count = 0;
 
+// Diagnostics. ca is decoded a second time from a copy sampled while the write
+// strobe is low, when the address is guaranteed stable, and compared with the
+// live decode that drives the stream pointer: any write the live decode misses
+// is counted. The second counter records bytes captured while a DDR write was
+// still outstanding, which the save path never waits for. Both ride out in the
+// spare bits of the header counter word, behind a marker nibble so a file from
+// a different build cannot be misread, and the format itself does not change.
+reg [23:0] ca_held;
+reg [9:0] c_miss, c_over;
+wire ss_data_sel_held = (ca_held[23:16] == 8'hC0) & (ca_held[15:0] == 16'h6000);
+
 // Detect if NMI is being used. Some games do not use NMI during game play.
 reg [15:0] nmi_cycle_cnt, nmi_read_sr;
 wire ss_use_nmi = |nmi_read_sr;
@@ -223,6 +236,8 @@ always @(posedge clk) begin
 					ss_busy <= 1; // Override NMI/IRQ vector
 					if (save_en) begin
 						ss_count <= ss_count + 1'b1;
+					c_miss <= 0;
+					c_over <= 0;
 					end
 				end
 			end
@@ -274,6 +289,10 @@ always @(posedge clk) begin
 			end
 		end
 
+		if (cpuwr_ce_n & ss_busy & ss_data_sel_held & ~ss_data_addr_inc & ~(&c_miss)) begin
+			c_miss <= c_miss + 1'b1;
+		end
+
 		if (cpuwr_ce_n | cpurd_ce_n) begin
 			if (ss_data_addr_inc) begin
 				ss_data_addr <= ss_data_addr + 1'b1;
@@ -307,6 +326,7 @@ always @(posedge clk) begin
 
 			if (ss_data_addr[2:0] == 3'd7) begin // 8 bytes written
 				ddr_state <= WRITE_DATA;
+				if ((ddr_req != ddr_ack) & ~(&c_over)) c_over <= c_over + 1'b1;
 			end
 		end
 
@@ -327,7 +347,7 @@ always @(posedge clk) begin
 					ddr_state <= save_end ? WRITE_CNTSIZE : DDR_END;
 				end
 				WRITE_CNTSIZE: begin
-					ddr_do <= {14'd0, ss_data_size[19:2], ss_count[31:0]};
+					ddr_do <= {14'd0, ss_data_size[19:2], 4'hD, c_miss, c_over, ss_count[7:0]};
 					ss_ddr_addr <= 20'd0;
 					ddr_we <= 1;
 					ddr_req <= ~ddr_req;
