@@ -10,6 +10,11 @@ module savestates
 
 	input       [3:0] ram_size,
 	input       [7:0] rom_type,
+	// Cart's size mask reaches 8 MB: its mirrors can land anywhere in bank 0,
+	// so the firmware window falls back to the top of bank 1 for that cart —
+	// today's behavior. Small carts use the bank-0 home, validated on the
+	// board this fix exists for. The image is downloaded to both bases.
+	input             fw_alt_base,
 
 	input             sysclkf_ce,
 	input             sysclkr_ce,
@@ -473,13 +478,13 @@ reg  [23:0] rom_addr_r;
 reg         ss_rom_ovr_r;
 always @(posedge clk) begin
 	// savestate.bin ROM
-	rom_addr_r[23:16] <= 8'h7F;
+	rom_addr_r[23:16] <= fw_alt_base ? 8'hFF : 8'h7F;
 	rom_addr_r[15: 0] <= map_rom_ovr ? map_rom_addr : { ca[16], ca[14:0] };
 	ss_rom_ovr_r      <= map_active ? map_rom_ovr : ss_busy;
 end
 
 always @(*) begin
-	rom_addr[23:16] = 8'h7F;
+	rom_addr[23:16] = fw_alt_base ? 8'hFF : 8'h7F;
 	rom_addr[15: 0] = map_rom_ovr ? map_rom_addr : { ca[16], ca[14:0] };
 	ss_rom_ovr      = map_active ? map_rom_ovr : ss_busy;
 	if (~sa1_active) begin

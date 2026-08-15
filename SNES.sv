@@ -717,15 +717,58 @@ wire[23:0] addr_download = ssbin_download ? ssbin_addr_download : cart_addr_down
 
 wire       sdram_download = cart_download | ssbin_download;
 
+// The savestate firmware is written to BOTH candidate bases. boot1.rom
+// arrives at core start, before any cart, when the future cart's size mask
+// is unknown; the fetch side (savestates.sv fw_alt_base) picks the base per
+// cart at run time. Each incoming word is passed through to $7Fxxxx as
+// before, then mirrored to $FFxxxx in the gap before the next word — the
+// HPS delivers words far slower than the few cycles this takes. Cart and
+// SPC downloads are untouched.
 reg [23:0] sdram_download_addr;
 reg [15:0] sdram_download_data;
 reg        sdram_download_wr;
 reg        sdram_download_en;
+reg        fwdl_pend = 0;
+reg  [3:0] fwdl_ph = 0;
+reg [15:0] fwdl_addr, fwdl_data;
+reg        io_wr_d = 0;
 always @(posedge clk_mem) begin
-	sdram_download_addr <= addr_download;
-	sdram_download_data <= ioctl_dout;
-	sdram_download_wr <= ioctl_wr;
+	io_wr_d <= ioctl_wr;
 	sdram_download_en <= sdram_download;
+	if (fwdl_pend) begin
+		fwdl_ph <= fwdl_ph + 1'd1;
+		case (fwdl_ph)
+			// The controller restarts its slot schedule on every write edge,
+			// so the mirror must wait for the first write to retire: a write
+			// takes one 8-slot pass, and a mirror issued two clocks in was
+			// killing the first write's CAS — the image never landed and
+			// every savestate jumped into nothing. Ten clocks of spacing
+			// gives the first write a full schedule plus margin; the whole
+			// sequence is still ~190 ns against the HPS's microseconds.
+			4'd0: sdram_download_wr <= 0;              // edge gap after the first write
+			4'd10: begin
+				sdram_download_addr <= { 8'hFF, fwdl_addr };
+				sdram_download_data <= fwdl_data;
+				sdram_download_wr   <= 1;
+			end
+			4'd13: begin
+				sdram_download_wr <= 0;
+				fwdl_pend <= 0;
+				fwdl_ph   <= 0;
+			end
+			default: ;
+		endcase
+	end else begin
+		sdram_download_addr <= addr_download;
+		sdram_download_data <= ioctl_dout;
+		sdram_download_wr   <= ioctl_wr;
+		if (ssbin_download & ioctl_wr & ~io_wr_d) begin
+			fwdl_addr <= ioctl_addr[15:0];
+			fwdl_data <= ioctl_dout;
+			fwdl_pend <= 1;
+			fwdl_ph   <= 0;
+		end
+	end
 end
 
 reg READ_PULSE;

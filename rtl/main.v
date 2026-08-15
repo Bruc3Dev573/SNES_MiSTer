@@ -944,6 +944,7 @@ savestates ss
 
 	.ram_size(RAM_SIZE),
 	.rom_type(ROM_TYPE),
+	.fw_alt_base(ROM_MASK[22]),
 
 	.sysclkf_ce(SYSCLKF_CE),
 	.sysclkr_ce(SYSCLKR_CE),
