@@ -479,6 +479,10 @@ main main
 	.ROM_ADDR(ROM_ADDR),
 	.ROM_D(ROM_D),
 	.ROM_Q(ROM_Q),
+	.FW_DL_CLK(clk_sys),
+	.FW_DL_WR(fw_dl_wr),
+	.FW_DL_ADDR(fw_dl_addr),
+	.FW_DL_DATA(fw_dl_data),
 	.ROM_OE_N(ROM_OE_N),
 	.ROM_WE_N(ROM_WE_N),
 	.ROM_WORD(ROM_WORD),
@@ -716,6 +720,15 @@ wire[23:0] ssbin_addr_download = { 8'hFF, ioctl_addr[15:0] };
 wire[23:0] addr_download = ssbin_download ? ssbin_addr_download : cart_addr_download[23:0];
 
 wire       sdram_download = cart_download | ssbin_download;
+
+// Tee of the savestate-firmware download into an on-chip copy. The image
+// keeps landing in SDRAM exactly as before, so bus traffic is unchanged on
+// every board; the copy is what the CPU will actually fetch from during a
+// savestate (see main.v). 5120 bytes = four M10K, comfortably above the
+// firmware's current 4 KB and the official boot1.rom.
+wire        fw_dl_wr   = ssbin_download & ioctl_wr & (ioctl_addr[15:0] < 16'd5120);
+wire [11:0] fw_dl_addr = ioctl_addr[12:1];
+wire [15:0] fw_dl_data = ioctl_dout;
 
 reg [23:0] sdram_download_addr;
 reg [15:0] sdram_download_data;

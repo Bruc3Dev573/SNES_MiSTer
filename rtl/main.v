@@ -16,6 +16,10 @@ module main (
 	output reg [23:0] ROM_ADDR,
 	output reg [15:0] ROM_D,
 	input      [15:0] ROM_Q,
+	input             FW_DL_CLK,
+	input             FW_DL_WR,
+	input      [11:0] FW_DL_ADDR,
+	input      [15:0] FW_DL_DATA,
 	output reg        ROM_CE_N,
 	output reg        ROM_OE_N,
 	output reg        ROM_WE_N,
@@ -159,6 +163,41 @@ wire        CPURD_N;
 wire        CPUWR_N;
 reg   [7:0] DI;
 wire  [7:0] DO;
+
+// On-chip copy of the savestate firmware. During a savestate the CPU's
+// firmware fetches are answered from here instead of from SDRAM: the fault
+// class the SuperStation One exposed lives in the data-return path of the
+// SDRAM region the firmware used to occupy alone, and this removes the
+// residency entirely instead of relocating within it. The SDRAM keeps seeing
+// the same requests as before (rom_addr override untouched), so bus traffic,
+// arbitration and refresh are byte-identical to the current core on every
+// board; only the fetch data source changes, and only while SS_BUSY.
+// 2560x16 = four M10K. The NMI vector pulls at $00:FFEA-FFEB map to offsets
+// far above the firmware bound, so the existing vector override is untouched.
+reg [15:0] fw_bram [0:2559];
+always @(posedge FW_DL_CLK) begin
+	if (FW_DL_WR) fw_bram[FW_DL_ADDR] <= FW_DL_DATA;
+end
+
+// Indexed by SS_ROM_ADDR, the post-override offset into the firmware image,
+// not by CA: with an SA1 cart the savestate map remaps fetches inside the
+// image (map_rom_ovr), and a CA-based index would serve the wrong byte
+// exactly there. SS_ROM_ADDR[15:0] equals the boot1.rom file offset in both
+// the plain and the remapped case, which is also what the download tee wrote.
+// SS_ROM_OVR covers every cycle of a savestate; the offset bound keeps the
+// override on the firmware bytes and passes everything else through — the
+// $C1xxxx shadow reads land at offsets $8000 and above and never hit.
+reg [15:0] fw_q;
+reg        fw_hit;
+reg        fw_lsb;
+always @(posedge MCLK) begin
+	fw_q   <= fw_bram[SS_ROM_ADDR[12:1]];
+	fw_lsb <= SS_ROM_ADDR[0];
+	fw_hit <= SS_ROM_OVR & (SS_ROM_ADDR[15:0] < 16'd5120);
+end
+
+wire [7:0]  fw_byte    = fw_lsb ? fw_q[15:8] : fw_q[7:0];
+wire [15:0] ROM_Q_MUX  = fw_hit ? {fw_byte, fw_byte} : ROM_Q;
 wire        RAMSEL_N;
 wire        ROMSEL_N;
 reg         IRQ_N;
@@ -379,7 +418,7 @@ DSP_LHRomMap #(.USE_DSPn(USE_DSPn)) DSP_LHRomMap
 	.irq_n(DLH_IRQ_N),
 
 	.rom_addr(DLH_ROM_ADDR),
-	.rom_q(ROM_Q),
+	.rom_q(ROM_Q_MUX),
 	.rom_ce_n(DLH_ROM_CE_N),
 	.rom_oe_n(DLH_ROM_OE_N),
 	.rom_word(DLH_ROM_WORD),
@@ -461,7 +500,7 @@ CX4Map CX4Map
 	.irq_n(CX4_IRQ_N),
 
 	.rom_addr(CX4_ROM_ADDR),
-	.rom_q(ROM_Q),
+	.rom_q(ROM_Q_MUX),
 	.rom_ce_n(CX4_ROM_CE_N),
 	.rom_oe_n(CX4_ROM_OE_N),
 	.rom_word(CX4_ROM_WORD),
@@ -539,7 +578,7 @@ SDD1Map SDD1Map
 	.irq_n(SDD_IRQ_N),
 
 	.rom_addr(SDD_ROM_ADDR),
-	.rom_q(ROM_Q),
+	.rom_q(ROM_Q_MUX),
 	.rom_ce_n(SDD_ROM_CE_N),
 	.rom_oe_n(SDD_ROM_OE_N),
 	.rom_word(SDD_ROM_WORD),
@@ -600,7 +639,7 @@ GSUMap GSUMap
 	.irq_n(GSU_IRQ_N),
 
 	.rom_addr(GSU_ROM_ADDR),
-	.rom_q(ROM_Q),
+	.rom_q(ROM_Q_MUX),
 	.rom_ce_n(GSU_ROM_CE_N),
 	.rom_oe_n(GSU_ROM_OE_N),
 	.rom_word(GSU_ROM_WORD),
@@ -680,7 +719,7 @@ SA1Map SA1Map
 	.irq_n(SA1_IRQ_N),
 
 	.rom_addr(SA1_ROM_ADDR),
-	.rom_q(ROM_Q),
+	.rom_q(ROM_Q_MUX),
 	.rom_ce_n(SA1_ROM_CE_N),
 	.rom_oe_n(SA1_ROM_OE_N),
 	.rom_word(SA1_ROM_WORD),
@@ -750,7 +789,7 @@ SPC7110Map SPC7110Map
 	.irq_n(SPC7110_IRQ_N),
 
 	.rom_addr(SPC7110_ROM_ADDR),
-	.rom_q(ROM_Q),
+	.rom_q(ROM_Q_MUX),
 	.rom_ce_n(SPC7110_ROM_CE_N),
 	.rom_oe_n(SPC7110_ROM_OE_N),
 	.rom_word(SPC7110_ROM_WORD),
@@ -815,7 +854,7 @@ BSXMap BSXMap
 
 	.rom_addr(BSX_ROM_ADDR),
 	.rom_d(BSX_ROM_D),
-	.rom_q(ROM_Q),
+	.rom_q(ROM_Q_MUX),
 	.rom_ce_n(BSX_ROM_CE_N),
 	.rom_oe_n(BSX_ROM_OE_N),
 	.rom_we_n(BSX_ROM_WE_N),
@@ -878,7 +917,7 @@ SufamiMap SufamiMap
 	.irq_n(SUFAMI_IRQ_N),
 
 	.rom_addr(SUFAMI_ROM_ADDR),
-	.rom_q(ROM_Q),
+	.rom_q(ROM_Q_MUX),
 	.rom_ce_n(SUFAMI_ROM_CE_N),
 	.rom_oe_n(SUFAMI_ROM_OE_N),
 	.rom_word(SUFAMI_ROM_WORD),
@@ -949,7 +988,7 @@ savestates ss
 	.sysclkr_ce(SYSCLKR_CE),
 
 	.romsel_n(ROMSEL_N),
-	.rom_q(ROM_Q),
+	.rom_q(ROM_Q_MUX),
 
 	.ca(CA),
 	.cpurd_n(CPURD_N),
