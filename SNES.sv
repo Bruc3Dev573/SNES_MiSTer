@@ -444,6 +444,7 @@ wire SNES_SYSCLKR_CE,SNES_SYSCLKF_CE;
 wire SNES_REFRESH;
 
 wire ss_avail;
+wire ss_relax_ok;
 wire ss_ddr_ack, ss_ddr_req, ss_ddr_we;
 wire [63:0] ss_ddr_dout, ss_ddr_din;
 wire [21:3] ss_ddr_addr;
@@ -591,6 +592,7 @@ main main
 	.SS_LOAD(ss_load),
 	.SS_SLOT(ss_slot),
 	.SS_AVAIL(ss_avail),
+	.SS_RELAX_OK(ss_relax_ok),
 
 	.SS_DDR_DI(ss_ddr_dout),
 	.SS_DDR_ACK(ss_ddr_ack),
@@ -763,6 +765,7 @@ sdram sdram
 
 	.dout1(sdr_dout1),
 
+	.relax_en(ss_relax_ok),
 	.rd1(clearing_ram ? 1'b0 : ~WRAM_CE_N & ~WRAM_OE_N & READ_PULSE),
 	.wr1(clearing_ram ? mem_fill_we : ~WRAM_CE_N & ~WRAM_WE_N & SNES_SYSCLKF_CE),
 	.rfs1(clearing_ram ? 1'b0 : !RESET_N ? RESET_REFRESH : SNES_REFRESH),

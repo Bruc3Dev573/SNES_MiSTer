@@ -129,6 +129,12 @@ module main (
 	input             SS_LOAD,
 	input       [1:0] SS_SLOT,
 	output            SS_AVAIL,
+	// The relaxed bank-1 CAS in sdram.sv is only safe with a single in-flight
+	// consumer on channel 0. SA1 and GSU keep fetching their own code during a
+	// savestate, interleaving with the firmware's deferred reads and racing the
+	// shared data buffer; CX4 is quiesced before a save ever starts, so it is
+	// fine. Those carts keep stock timing.
+	output            SS_RELAX_OK,
 
 	input      [63:0] SS_DDR_DI,
 	input             SS_DDR_ACK,
@@ -1032,6 +1038,7 @@ end else begin
 end
 endgenerate
 
+assign SS_RELAX_OK = ~MAP_ACTIVE[3] & ~MAP_ACTIVE[2];
 assign SS_AVAIL = ~|{ROM_TYPE[7:4]} | MAP_ACTIVE[3] | (ROM_TYPE[7:6] == 2'b10) | MAP_ACTIVE[2] | MAP_ACTIVE[0]; // Basic carts + SA1 + DSPn + GSU + CX4
 
 assign TURBO_ALLOW = ~(MAP_ACTIVE[3] | MAP_ACTIVE[1] | SS_BUSY);

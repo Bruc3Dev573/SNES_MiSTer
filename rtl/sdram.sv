@@ -21,6 +21,7 @@ module sdram
 	output    [15: 0] dout0,
 	input             wr0,
 	input             rd0,
+	input             relax_en,  // bank-1 CAS deferral allowed (single chan-0 consumer)
 	input             word0,
 	
 	input     [23: 0] addr1,
@@ -134,6 +135,23 @@ module sdram
 	reg         read[2],write[2],is_sni[2],rfs;
 	
 	wire raw_req_test = (addr[0][23:1] != addr0[23:1]);
+
+	// Relaxed row-activation margin for channel-0 reads from bank 1. Nothing
+	// but the savestate firmware ever reads there, and on at least one board's
+	// RAM the standard two-clock RAS-to-CAS spacing (~23 ns against a part
+	// wanting 18-20 nominal) returns marginal data on exactly those reads.
+	// The CAS for such a read is skipped at its usual slot and issued from
+	// here RELAX_WAIT clocks later, tRCD ~105 ns, still well inside the CPU
+	// cycle that awaits the data. While the deferral is pending, refreshes are
+	// held off (see the request block) so no command lands inside the window;
+	// real cross-channel requests cannot arrive that fast, and the replay
+	// audit asserts both properties on a full save's traffic.
+	localparam RELAX_WAIT = 4'd7;
+	reg        relax_mark = 0;  // current chan-0 read is a bank-1 read
+	reg        relax_pend = 0;  // its CAS is owed
+	reg [ 3:0] relax_cnt  = 0;
+	reg [22:0] relax_addr = 0;
+	reg        relax_sni  = 0;
 
 	reg sni_rd_pending_, sni_wr_pending_;
 	wire sni_rd_pending = sni_rd_pending_ | (sni_rd_req && !old_sni_rd);
@@ -296,9 +314,14 @@ module sdram
 				addr[0] <= addr0;
 				word[0] <= word0;
 				read[0] <= raw_req_test;
-				rfs <= ~raw_req_test & rfs1;
+				// While a relaxed CAS is pending, do not let a redundant pulse
+				// start a refresh: its commands would land inside the deferral
+				// window. The next redundant pulse is a CPU half-cycle away, so
+				// the refresh cadence is unharmed.
+				rfs <= ~raw_req_test & rfs1 & ~relax_pend;
 
 				if (raw_req_test || rfs1) st_num <= 1;
+				relax_mark <= raw_req_test & addr0[23] & relax_en;
 			end
 			if (rd1 && !old_rd1) begin
 				if (sni_write_ch0 && !(wr0 && !old_wr0)) begin
@@ -315,6 +338,22 @@ module sdram
 
 			if ((wr0 && !old_wr0) || (wr1 && !old_wr1) || (rd1 && !old_rd1) || read[1] || write[0] || write[1]) begin
 				rfs <= 0;
+			end
+
+			// Relaxed-CAS bookkeeping: armed at the slot the CAS was skipped
+			// in, released the clock the deferred CAS actually goes out,
+			// which is any clock at count zero not taken by a fast path.
+			if (st_num == 4'd2 && read[0] && !rfs && relax_mark && !relax_pend) begin
+				relax_pend <= 1;
+				relax_cnt  <= RELAX_WAIT;
+				relax_addr <= addr[0][22:0];
+				relax_sni  <= is_sni[0];
+			end else if (relax_pend) begin
+				if (relax_cnt != 0) relax_cnt <= relax_cnt - 1'd1;
+				else if (!(rd0 && !old_rd0) && !(wr0 && !old_wr0 && !rd0)
+				       && !(sni_read_ch0 && !(wr1 && !old_wr1) || sni_write_ch0 && !(rd1 && !old_rd1))) begin
+					relax_pend <= 0;
+				end
 			end
 		end
 	end
@@ -346,6 +385,17 @@ module sdram
 							state[0].CMD  <= CTRL_RAS;
 								state[0].ADDR <= sni_addr[22:0];
 								state[0].BANK <= {1'b0,sni_addr[23]};
+			end else if (relax_pend && relax_cnt == 0) begin
+							// The deferred bank-1 CAS. At this point the slot
+							// schedule has run out (st_num saturated), so the only
+							// contenders are the fast paths above; if one of them
+							// takes the cycle, the pending flag holds and this
+							// issues on the next clock.
+							state[0].CMD  <= CTRL_CAS;
+								state[0].ADDR <= relax_addr;
+								state[0].RD   <= 1;
+								state[0].SNI  <= relax_sni;
+								state[0].BANK <= 2'b01;
 			end else
 			case (st_num[2:0])
 //				3'd0: begin state[0].CMD  <= read[0]     ? CTRL_RAS : CTRL_IDLE;
@@ -357,9 +407,9 @@ module sdram
 								state[0].BANK <= {1'b1,addr[1][23]};
 								state[0].RFS  <= rfs; end
 
-				3'd2: begin state[0].CMD  <= read[0] && !rfs    ? CTRL_CAS : CTRL_IDLE;
+				3'd2: begin state[0].CMD  <= read[0] && !rfs && !relax_mark ? CTRL_CAS : CTRL_IDLE;
 								state[0].ADDR <= addr[0][22:0];
-								state[0].RD   <= read[0] & ~rfs;
+								state[0].RD   <= read[0] & ~rfs & ~relax_mark;
 								state[0].SNI <= is_sni[0];
 								state[0].BANK <= {1'b0,addr[0][23]}; end
 
