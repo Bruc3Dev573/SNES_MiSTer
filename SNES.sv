@@ -245,6 +245,7 @@ wire        ioctl_download;
 wire [24:0] ioctl_addr;
 wire [15:0] ioctl_dout;
 wire        ioctl_wr;
+reg         ioctl_wait = 0;
 wire  [7:0] ioctl_index;
 
 wire [12:0] joy0,joy1,joy2,joy3,joy4;
@@ -292,6 +293,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io
 	.ioctl_dout(ioctl_dout),
 	.ioctl_wr(ioctl_wr),
 	.ioctl_download(ioctl_download),
+	.ioctl_wait(ioctl_wait),
 	.ioctl_index(ioctl_index),
 
 	.sd_lba('{sd_lba}),
@@ -737,6 +739,27 @@ always @(posedge clk_mem) begin
 	sdram_download_en <= sdram_download;
 end
 
+// No refresh happens during a download (rd0 is held low), so bank 1 decays.
+// Every 128 clk (~6 us, under the 7.8 us per row needed for 64 ms): hold the HPS,
+// let a pending write finish (8 clk), then refresh like RESET_REFRESH does.
+// The HPS is held, so ioctl_addr doesn't change and the controller sees a refresh.
+// WRAM clear doesn't need it: ~24 ms.
+reg dl_rfs = 0;
+always @(posedge clk_sys) begin
+	reg [6:0] cnt;
+
+	dl_rfs <= 0;
+	if (!sdram_download || clearing_ram) begin
+		cnt <= 0;
+		ioctl_wait <= 0;
+	end else begin
+		cnt <= cnt + 1'd1;
+		if (cnt == 7'd0)  ioctl_wait <= 1;
+		if (cnt == 7'd8)  dl_rfs <= 1;
+		if (cnt == 7'd12) ioctl_wait <= 0;
+	end
+end
+
 reg READ_PULSE;
 always @(posedge clk_sys)
 	READ_PULSE <= SNES_SYSCLKR_CE;
@@ -763,7 +786,7 @@ sdram sdram
 	.din0(sdram_download_en ? sdram_download_data : ROM_D),
 	.dout0(ROM_Q),
 
-	.rd0(sdram_download_en ? 1'b0 : !RESET_N ? RESET_REFRESH : ~ROM_OE_N),
+	.rd0(sdram_download_en ? dl_rfs : !RESET_N ? RESET_REFRESH : ~ROM_OE_N),
 	.wr0(sdram_download_en ? sdram_download_wr : ~ROM_WE_N),
 	.word0(sdram_download_en | ROM_WORD),
 
@@ -774,7 +797,7 @@ sdram sdram
 
 	.rd1(clearing_ram ? 1'b0 : ~WRAM_CE_N & ~WRAM_OE_N & READ_PULSE),
 	.wr1(clearing_ram ? mem_fill_we : ~WRAM_CE_N & ~WRAM_WE_N & SNES_SYSCLKF_CE),
-	.rfs1(clearing_ram ? 1'b0 : !RESET_N ? RESET_REFRESH : SNES_REFRESH),
+	.rfs1(clearing_ram ? 1'b0 : sdram_download_en ? dl_rfs : !RESET_N ? RESET_REFRESH : SNES_REFRESH),
 	.word1(0),
 
 	.sni_addr(SDRAM_SNI_ADDR),
