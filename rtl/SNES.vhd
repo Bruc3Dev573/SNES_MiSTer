@@ -109,6 +109,9 @@ entity SNES is
 		TURBO			: in std_logic;
 		
 		DSP_FREQ		: in std_logic;
+		PAUSE			: in std_logic := '0';
+		PAUSED		: out std_logic;
+		PAUSE_VID	: out std_logic;
 		
 		DBG_BG_EN	: in std_logic_vector(4 downto 0);
 		DBG_CPU_EN	: in std_logic;
@@ -161,6 +164,7 @@ architecture rtl of SNES is
 	signal SMP_EN_R : std_logic;
 
 	signal SPC_S0 : std_logic; -- SPC state 0 for Save state
+	signal CPU_PAUSED : std_logic;
 
 	signal DSP_EN : std_logic;
 
@@ -256,6 +260,9 @@ begin
 
 		TURBO			=> TURBO,
 		SS_BUSY		=> SS_BUSY,
+		PAUSE			=> PAUSE,
+		PAUSED		=> CPU_PAUSED,
+		PAUSE_VID	=> PAUSE_VID,
 		DBG_CPU_EN	=> DBG_CPU_EN
 	);
 
@@ -402,7 +409,8 @@ begin
 		SS_DO		=> SS_SMP_DO
 	);
 
-	DSP_EN <= ENABLE and not (SS_BUSY and SPC_S0); -- Pause DSP on State 0 during Save state
+	DSP_EN <= ENABLE and not ((SS_BUSY or CPU_PAUSED) and SPC_S0); -- Pause DSP on State 0 during Save state or core pause
+	PAUSED <= CPU_PAUSED;
 
 	-- DSP 
 	DSP: entity work.DSP 

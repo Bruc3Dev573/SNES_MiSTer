@@ -46,6 +46,9 @@ entity SCPU is
 		TURBO				: in std_logic;
 		
 		SS_BUSY			: in std_logic := '0';
+		PAUSE				: in std_logic := '0';	-- request, any time
+		PAUSED			: out std_logic;			-- effective pause, frame-aligned
+		PAUSE_VID		: out std_logic;			-- paused, or first frame after resume
 		
 		DBG_CPU_EN		: in std_logic
 	);
@@ -77,6 +80,7 @@ architecture rtl of SCPU is
 	signal P65_NMI_N, P65_IRQ_N : std_logic;
 	signal P65_RST_N : std_logic;
 	signal P65_EN : std_logic;
+	signal PAUSED_R, PAUSED_LAST, PAUSE_SYNC : std_logic := '0';
 	signal P65_VPA, P65_VDA : std_logic;
 
 	type speed_t is (
@@ -341,7 +345,31 @@ begin
 	end process;
 
 	EN <= ENABLE and (not REFRESHED);
-	P65_EN <= not DMA_ACTIVE and ENABLE;
+	-- The pause takes effect, and ends, only at the first CPU cycle boundary after
+	-- VBlank ends, so the CPU resumes at the raster position it stopped at. While
+	-- paused, NMI edges and new H/V IRQs are masked (see below): otherwise the
+	-- 65C816 latches them and takes a stale interrupt mid-frame on resume.
+	-- PAUSE_VID also covers the first frame after resume, which renders before the
+	-- game's NMI has set the PPU up again.
+	process( RST_N, CLK )
+	begin
+		if RST_N = '0' then
+			PAUSED_R <= '0';
+			PAUSED_LAST <= '0';
+			PAUSE_SYNC <= '0';
+		elsif rising_edge(CLK) then
+			if INT_CLKF_CE = '1' and PAUSE_SYNC = '1' then
+				PAUSED_LAST <= PAUSED_R;
+				PAUSED_R <= PAUSE;
+				PAUSE_SYNC <= '0';
+			elsif FALLING_VBLANK = '1' and CLK4_CE_R = '1' then
+				PAUSE_SYNC <= '1';
+			end if;
+		end if;
+	end process;
+	PAUSE_VID <= PAUSED_R or PAUSED_LAST;
+	PAUSED <= PAUSED_R;
+	P65_EN <= not DMA_ACTIVE and ENABLE and not PAUSED_R;
 
 	SYSCLK <= INT_CLK; 
 	SYSCLKF_CE <= INT_CLKF_CE;
@@ -618,14 +646,14 @@ begin
 					
 				if HVIRQ_EN = "00" then
 					IRQ_FLAG <= '0'; 
-				elsif IRQ_TIME_FF2 = '1' then
+				elsif IRQ_TIME_FF2 = '1' and PAUSED_R = '0' then
 					IRQ_FLAG <= '1'; 
 				elsif TIMEUP_READ = '1' and INT_CLKF_CE = '1' then
 					IRQ_FLAG <= '0'; 
 				end if;
 			end if;
 			
-			P65_NMI_N <= not (NMI_FLAG and NMI_EN);
+			P65_NMI_N <= not (NMI_FLAG and NMI_EN and not PAUSED_R);
 			P65_IRQ_N <= (not IRQ_FLAG) and IRQ_N; 
 		end if;
 	end process;

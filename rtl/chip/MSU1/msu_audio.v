@@ -12,6 +12,7 @@ module msu_audio
 	input             ctl_repeat,
 	input             ctl_play,
 	input             ctl_resume,
+	input             pause,
 	output reg        ctl_stop,
 
 	input      [31:0] track_size,
@@ -217,7 +218,7 @@ msu_fifo #(32,10) audio_fifo
 
 	.rdclk(clk),
 	.q({sample_r,sample_l}),
-	.rdreq(sample_ce & playing),
+	.rdreq(sample_ce & playing & ~pause),
 	.rdempty(fifo_empty)
 );
 

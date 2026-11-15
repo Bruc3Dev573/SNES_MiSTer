@@ -9,6 +9,7 @@ entity SA1 is
 		RST_N			: in std_logic;
 		CLK			: in std_logic;
 		ENABLE		: in std_logic;
+		PAUSE			: in std_logic := '0';
 		
 		SNES_A   	: in std_logic_vector(23 downto 0);
 		SNES_DO		: out std_logic_vector(7 downto 0);
@@ -67,6 +68,7 @@ signal P65_NMI_N				: std_logic;
 signal P65_IRQ_N				: std_logic;
 signal P65_RST_N				: std_logic;
 signal P65_EN					: std_logic;
+signal PAUSE_R				: std_logic := '0';
 signal P65_CE					: std_logic;
 signal P65_VDA					: std_logic;
 signal P65_VPA					: std_logic;
@@ -301,7 +303,8 @@ EN <= ENABLE and CLK_CE;
 
 -- 65C816
 P65_RST_N <= not SA1RST and RST_N;
-P65_EN <= not SA1WAIT and ENABLE;
+PAUSE_R <= PAUSE when rising_edge(CLK);
+P65_EN <= not SA1WAIT and ENABLE and not PAUSE_R;
 P65_CE <= SA1_EN and CLK_CE;
 P65_NMI_N <= not SA1_NMI;
 P65_IRQ_N <= not SA1_IRQ;
@@ -1127,8 +1130,9 @@ VDP <= std_logic_vector( resize(unsigned(VBP_BUF) srl to_integer(VBIT), VDP'leng
 	
 --MMIO
 SNES_MMIO_WRITE <= SNES_MMIO_WRITE_ACCESS and not SNES_WR_N and SYSCLKF_CE;
-SA1_MMIO_WRITE <= SA1_MMIO_WRITE_ACCESS and P65_WR;
-SA1_MMIO_READ <= SA1_MMIO_READ_ACCESS and P65_RD;
+-- A halted CPU (RDY low) holds its bus cycle: count the MMIO access once, when it completes.
+SA1_MMIO_WRITE <= SA1_MMIO_WRITE_ACCESS and P65_WR and P65_EN;
+SA1_MMIO_READ <= SA1_MMIO_READ_ACCESS and P65_RD and P65_EN;
 
 process( RST_N, CLK )
 variable SUM : signed(40 downto 0);

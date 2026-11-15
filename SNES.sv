@@ -34,7 +34,6 @@ assign LED_POWER = 0;
 assign BUTTONS   = osd_btn;
 assign VGA_SCALER= 0;
 assign VGA_DISABLE = 0;
-assign HDMI_FREEZE = 0;
 assign HDMI_BLACKOUT = 0;
 assign HDMI_BOB_DEINT = 0;
 
@@ -208,9 +207,9 @@ parameter CONF_STR = {
 
 	"-;",
 	"R0,Reset;",
-	"J1,A(SS Fire),B(SS Cursor),X(SS TurboSw),Y(SS Pause),LT(SS Cursor),RT(SS Fire),Select,Start,SaveState;",
+	"J1,A(SS Fire),B(SS Cursor),X(SS TurboSw),Y(SS Pause),LT(SS Cursor),RT(SS Fire),Select,Start,SaveState,Pause;",
 	"I,",
-	"Slot=DPAD|Save/Load=Pause+DPAD,",
+	"Slot=DPAD|Save/Load=SaveState+DPAD,",
 	"Active Slot 1,",
 	"Active Slot 2,",
 	"Active Slot 3,",
@@ -247,7 +246,9 @@ wire [15:0] ioctl_dout;
 wire        ioctl_wr;
 wire  [7:0] ioctl_index;
 
-wire [12:0] joy0,joy1,joy2,joy3,joy4;
+wire [13:0] joy0;
+wire [12:0] joy1,joy2,joy3,joy4;
+reg         btn_pause = 0;
 wire [24:0] ps2_mouse;
 wire [10:0] ps2_key;
 wire [15:0] joystick1_rumble;
@@ -554,6 +555,8 @@ main main
 	.IO_WR(spc_download & ioctl_wr),
 	
 	.TURBO(status[4] & turbo_allow),
+	.PAUSE(btn_pause),
+	.PAUSE_VID(HDMI_FREEZE),
 	.TURBO_ALLOW(turbo_allow),
 	
 	.DSP_FREQ(status[30]),
@@ -968,6 +971,11 @@ video_mixer #(.LINE_LENGTH(520), .GAMMA(1)) video_mixer
 	.*,
 	.hq2x(scale==1),
 	.freeze_sync(),
+	// While paused the CPU skips the raster IRQs that split-screen and letterboxed
+	// games rely on, so the live PPU picture is wrong: HDMI shows the scaler's last
+	// complete frame instead (HDMI_FREEZE). The direct analog output has no framebuffer
+	// and keeps the live picture, so the mixer's own freeze (black + sync) stays off.
+	.HDMI_FREEZE(1'b0),
 	.VGA_DE(vga_de),
 	.R((LG_TARGET && GUN_MODE && (!status[29] | LG_T)) ? {8{LG_TARGET[0]}} : R),
 	.G((LG_TARGET && GUN_MODE && (!status[29] | LG_T)) ? {8{LG_TARGET[1]}} : G),
@@ -1351,6 +1359,7 @@ msu_audio msu_audio
 	.ctl_play(msu_audio_playing),
 	.ctl_resume(msu_audio_resume),
 	.ctl_repeat(msu_audio_repeat),
+	.pause(btn_pause),
 
 	.track_size(msu_audio_size),
 	.track_processing(msu_track_request),
@@ -1477,5 +1486,14 @@ savestate_ui #(.INFO_TIMEOUT_BITS(25)) savestate_ui
 	.statusUpdate   (ss_status     ),
 	.selected_slot  (ss_slot       )
 );
+
+// "Pause" virtual button: holds the CPU, SA-1, APU and MSU-1 audio; HDMI shows the
+// last complete frame. A savestate request releases it.
+always @(posedge clk_sys) begin : pausekey
+	reg old_state;
+	old_state <= joy0[13];
+	if (reset | ss_save | ss_load) btn_pause <= 0;
+	else if (~old_state & joy0[13]) btn_pause <= ~btn_pause;
+end
 
 endmodule

@@ -102,6 +102,8 @@ module main (
 
 	input             TURBO,
 	output            TURBO_ALLOW,
+	input             PAUSE,
+	output            PAUSE_VID,
 	
 	input             DSP_FREQ,
 
@@ -177,6 +179,7 @@ wire         SNES_ARAM_OE_N;
 wire         SNES_ARAM_WE_N;
 
 wire  [6:0] MAP_ACTIVE;
+wire        SNES_PAUSED; // frame-aligned pause from the CPU, shared with the SA-1
 
 SNES SNES
 (
@@ -279,6 +282,9 @@ SNES SNES
 	.DBG_CPU_EN(DBG_CPU_EN),
 	
 	.turbo(TURBO),
+	.pause(PAUSE),
+	.paused(SNES_PAUSED),
+	.pause_vid(PAUSE_VID),
 	
 	.dsp_freq(DSP_FREQ),
 
@@ -659,6 +665,7 @@ SA1Map SA1Map
 (
 	.mclk(MCLK),
 	.rst_n(RESET_N),
+	.pause(SNES_PAUSED),
 
 	.ca(CA),
 	.di(DO),
